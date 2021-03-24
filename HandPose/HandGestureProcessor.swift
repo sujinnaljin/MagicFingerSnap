@@ -13,10 +13,9 @@ import CoreGraphics
 
 class HandGestureProcessor {
     enum State {
-        case possiblePinch
         case pinched
-        case possibleApart
         case apart
+        case triggered
         case unknown
     }
     
@@ -54,13 +53,21 @@ class HandGestureProcessor {
             pinchEvidenceCounter += 1
             apartEvidenceCounter = 0
             // Set new state based on evidence amount.
-            state = (pinchEvidenceCounter >= evidenceCounterStateTrigger) ? .pinched : .possiblePinch
+            if pinchEvidenceCounter >= evidenceCounterStateTrigger {
+                state = .pinched
+            }
         } else {
             // Keep accumulating evidence for apart state.
             apartEvidenceCounter += 1
             pinchEvidenceCounter = 0
             // Set new state based on evidence amount.
-            state = (apartEvidenceCounter >= evidenceCounterStateTrigger) ? .apart : .possibleApart
+            if apartEvidenceCounter >= evidenceCounterStateTrigger {
+                if state == .pinched  && pointsPair.thumbTip.x > pointsPair.indexTip.x {
+                    state = .triggered
+                } else {
+                    state = .apart
+                }
+            }
         }
     }
 }

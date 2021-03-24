@@ -17,24 +17,11 @@ class CameraViewController: UIViewController {
     private var cameraFeedSession: AVCaptureSession?
     private var handPoseRequest = VNDetectHumanHandPoseRequest()
     
-    private let drawOverlay = CAShapeLayer()
-    private let drawPath = UIBezierPath()
-    private var evidenceBuffer = [HandGestureProcessor.PointsPair]()
-    private var lastDrawPoint: CGPoint?
-    private var isFirstSegment = true
     private var lastObservationTimestamp = Date()
-    
     private var gestureProcessor = HandGestureProcessor()
     
     override func viewDidLoad() {
         super.viewDidLoad()
-        drawOverlay.frame = view.layer.bounds
-        drawOverlay.lineWidth = 5
-        drawOverlay.backgroundColor = #colorLiteral(red: 0.9999018312, green: 1, blue: 0.9998798966, alpha: 0.5).cgColor
-        drawOverlay.strokeColor = #colorLiteral(red: 0.6, green: 0.1, blue: 0.3, alpha: 1).cgColor
-        drawOverlay.fillColor = #colorLiteral(red: 0.9999018312, green: 1, blue: 0.9998798966, alpha: 0).cgColor
-        drawOverlay.lineCap = .round
-        view.layer.addSublayer(drawOverlay)
         // This sample app detects one hand only.
         handPoseRequest.maximumHandCount = 1
         // Add state change handler to hand gesture processor.
@@ -69,8 +56,8 @@ class CameraViewController: UIViewController {
     
     func setupAVSession() throws {
         // Select a front facing camera, make an input.
-        guard let videoDevice = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front) else {
-            throw AppError.captureSessionSetup(reason: "Could not find a front facing camera.")
+        guard let videoDevice = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back) else {
+            throw AppError.captureSessionSetup(reason: "Could not find a back camera.")
         }
         
         guard let deviceInput = try? AVCaptureDeviceInput(device: videoDevice) else {
@@ -125,76 +112,34 @@ class CameraViewController: UIViewController {
         let pointsPair = gestureProcessor.lastProcessedPointsPair
         var tipsColor: UIColor
         switch state {
-        case .possiblePinch, .possibleApart:
-            // We are in one of the "possible": states, meaning there is not enough evidence yet to determine
-            // if we want to draw or not. For now, collect points in the evidence buffer, so we can add them
-            // to a drawing path when required.
-            evidenceBuffer.append(pointsPair)
-            tipsColor = .orange
+        case .triggered:
+            tipsColor = .clear
+            showFire(with: pointsPair)
         case .pinched:
-            // We have enough evidence to draw. Draw the points collected in the evidence buffer, if any.
-            for bufferedPoints in evidenceBuffer {
-                updatePath(with: bufferedPoints, isLastPointsPair: false)
-            }
-            // Clear the evidence buffer.
-            evidenceBuffer.removeAll()
-            // Finally, draw the current point.
-            updatePath(with: pointsPair, isLastPointsPair: false)
             tipsColor = .green
         case .apart, .unknown:
-            // We have enough evidence to not draw. Discard any evidence buffer points.
-            evidenceBuffer.removeAll()
-            // And draw the last segment of our draw path.
-            updatePath(with: pointsPair, isLastPointsPair: true)
             tipsColor = .red
         }
         cameraView.showPoints([pointsPair.thumbTip, pointsPair.indexTip], color: tipsColor)
     }
     
-    private func updatePath(with points: HandGestureProcessor.PointsPair, isLastPointsPair: Bool) {
-        // Get the mid point between the tips.
+    private func showFire(with points: HandGestureProcessor.PointsPair) {
+        view.subviews.forEach({ $0.removeFromSuperview() })
         let (thumbTip, indexTip) = points
-        let drawPoint = CGPoint.midPoint(p1: thumbTip, p2: indexTip)
-
-        if isLastPointsPair {
-            if let lastPoint = lastDrawPoint {
-                // Add a straight line from the last midpoint to the end of the stroke.
-                drawPath.addLine(to: lastPoint)
-            }
-            // We are done drawing, so reset the last draw point.
-            lastDrawPoint = nil
-        } else {
-            if lastDrawPoint == nil {
-                // This is the beginning of the stroke.
-                drawPath.move(to: drawPoint)
-                isFirstSegment = true
-            } else {
-                let lastPoint = lastDrawPoint!
-                // Get the midpoint between the last draw point and the new point.
-                let midPoint = CGPoint.midPoint(p1: lastPoint, p2: drawPoint)
-                if isFirstSegment {
-                    // If it's the first segment of the stroke, draw a line to the midpoint.
-                    drawPath.addLine(to: midPoint)
-                    isFirstSegment = false
-                } else {
-                    // Otherwise, draw a curve to a midpoint using the last draw point as a control point.
-                    drawPath.addQuadCurve(to: midPoint, controlPoint: lastPoint)
-                }
-            }
-            // Remember the last draw point for the next update pass.
-            lastDrawPoint = drawPoint
-        }
-        // Update the path on the overlay layer.
-        drawOverlay.path = drawPath.cgPath
+        var drawPoint = CGPoint.midPoint(p1: thumbTip, p2: indexTip)
+        drawPoint.y -= 100
+        guard let confettiImageView = UIImageView.fromGif(frame: CGRect(origin: drawPoint, size: CGSize(width: 100, height: 100)), resourceName: "fire") else { return }
+         view.addSubview(confettiImageView)
+         confettiImageView.startAnimating()
     }
     
     @IBAction func handleGesture(_ gesture: UITapGestureRecognizer) {
         guard gesture.state == .ended else {
             return
         }
-        evidenceBuffer.removeAll()
-        drawPath.removeAllPoints()
-        drawOverlay.path = drawPath.cgPath
+        self.view.subviews.forEach { (view) in
+            view.removeFromSuperview()
+        }
     }
 }
 
@@ -242,3 +187,27 @@ extension CameraViewController: AVCaptureVideoDataOutputSampleBufferDelegate {
     }
 }
 
+// MARK: - Gif helper
+
+extension UIImageView {
+    
+    static func fromGif(frame: CGRect, resourceName: String) -> UIImageView? {
+        guard let path = Bundle.main.path(forResource: resourceName, ofType: "gif") else {
+            print("Gif does not exist at that path")
+            return nil
+        }
+        let url = URL(fileURLWithPath: path)
+        guard let gifData = try? Data(contentsOf: url),
+            let source =  CGImageSourceCreateWithData(gifData as CFData, nil) else { return nil }
+        var images = [UIImage]()
+        let imageCount = CGImageSourceGetCount(source)
+        for i in 0 ..< imageCount {
+            if let image = CGImageSourceCreateImageAtIndex(source, i, nil) {
+                images.append(UIImage(cgImage: image))
+            }
+        }
+        let gifImageView = UIImageView(frame: frame)
+        gifImageView.animationImages = images
+        return gifImageView
+    }
+}
